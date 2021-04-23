@@ -45,7 +45,7 @@ if __name__ == '__main__':
 
     if args.path_to_labels_csv != '':
         # Magic
-        columns=['1dAVb', 'RBBB', 'LBBB', 'SB', 'AF', 'ST']
+        columns = ['1dAVb', 'RBBB', 'LBBB', 'SB', 'AF', 'ST']
         threshold = np.array([0.31871256, 0.51558906, 0.5997846, 0.3313214, 0.50154346,
                               0.4270824])
         y_true = pd.read_csv(args.path_to_labels_csv).to_numpy()

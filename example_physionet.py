@@ -6,6 +6,7 @@ import ast
 import h5py
 import matplotlib.pyplot as plot
 
+
 def load_raw_data(df, sampling_rate, path):
     if sampling_rate == 100:
         data = [wfdb.rdsamp(path+f) for f in df.filename_lr]
@@ -13,6 +14,7 @@ def load_raw_data(df, sampling_rate, path):
         data = [wfdb.rdsamp(path+f) for f in df.filename_hr]
     data = np.array([signal for signal, meta in data])
     return data
+
 
 path = './data/ptb-xl-1.0.1/'
 sampling_rate = 500
