@@ -62,7 +62,7 @@ class EcgAttention(nn.Module):
         x = self.transformer_encoder(x).transpose(0, 1)
         x = self.bn5(F.relu(self.conv5(x)))
         x = x.view((x.shape[0], -1))
-        x = F.relu(self.pred(x))
+        x = self.pred(x)
         return x
 
 
