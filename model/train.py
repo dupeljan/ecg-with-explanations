@@ -34,7 +34,7 @@ class TrainingPipeline:
         self.batch_size = 256
         self.model = EcgAttention(num_classes=6).to(self.device).double()
         self.loss = FocalLoss(self.device, alpha=10, gamma=5)#nn.BCEWithLogitsLoss()
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-5, weight_decay=0.1)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4, weight_decay=0.1)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.99)
         #self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
         self.train_ds, self.test_ds = load_tenor_dataset(self.device)
@@ -77,9 +77,8 @@ class TrainingPipeline:
                 loss += self.loss(out, y)
                 i += 1
                 y_pred = (out > 0.).int()
-                diff = y - y_pred
-                guess += (diff == 1).int().sum()
-                n += y_pred.view(-1).size(0)
+                guess += sum([int(all(y[i] == y_pred[i])) for i in range(len(y))])
+                n += y_pred.size(0)
 
         res = {
             'acc': guess / n,
