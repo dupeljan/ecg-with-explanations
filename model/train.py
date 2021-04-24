@@ -3,11 +3,14 @@ from torch import nn
 from torch.utils.data import DataLoader
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 
 from model import EcgAttention
 from dataset import load_tenor_dataset
+from utils import AverageMeter
 
 
+CHECKPOINT_SAVE_PATH = '../checkpoints/best_EcgAttention.pth'
 class FocalLoss(nn.Module):
 
     def __init__(self, device, alpha=1.0, gamma=1.0):
@@ -27,17 +30,25 @@ class FocalLoss(nn.Module):
         return focal_loss.mean()
 
 class TrainingPipeline:
-    def __init__(self):
+    def __init__(self, checkpoint:str = None):
         self.device = torch.device(
                 "cuda") if torch.cuda.is_available() else torch.device("cpu")
-        self.epochs = 50
+        self.epochs = 150
         self.batch_size = 256
+        self.best_acc = 0.
         self.model = EcgAttention(num_classes=6).to(self.device).double()
+        if checkpoint:
+            self.model.load_state_dict(torch.load(checkpoint))
+
         self.loss = FocalLoss(self.device, alpha=10, gamma=5)#nn.BCEWithLogitsLoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4, weight_decay=0.1)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.99)
-        #self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
+        self.scheduler_exp = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.99)
+        self.scheduler_plateu = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
         self.train_ds, self.test_ds = load_tenor_dataset(self.device)
+
+        self.mean_train_loss = AverageMeter()
+        self.mean_test_loss = AverageMeter()
+        self.mean_acc = AverageMeter()
         print('Initialized successfully')
 
     def get_lr(self):
@@ -45,6 +56,7 @@ class TrainingPipeline:
             return param_group['lr']
 
     def train(self):
+        tenorboard = SummaryWriter()
         train_dl = DataLoader(self.train_ds, batch_size=self.batch_size)
         for epoch in range(self.epochs):
             print(f'epoch {epoch}')
@@ -53,14 +65,32 @@ class TrainingPipeline:
                 pred = self.model(x)
                 loss = self.loss(pred, y)
                 print(f'loss: {loss.item()}, lr {self.get_lr()}')
+                self.mean_train_loss.update(loss.item())
                 loss.backward()
 
                 self.optimizer.step()
 
                 self.optimizer.zero_grad()
-
+                #self.scheduler.step()#history['loss'])
             history = self.validate()
-            self.scheduler.step()#history['loss'])
+            print(history)
+            print(f'Mean train loss {self.mean_train_loss.avg}')
+
+            # Save checkpoint
+            if history['acc'] > self.best_acc:
+                print('Save best result!')
+                self.best_acc = history['acc']
+                torch.save(self.model.state_dict(), CHECKPOINT_SAVE_PATH)
+
+            # Write to tensorboard
+            tenorboard.add_scalar('Loss/train', self.mean_train_loss.avg, epoch)
+            tenorboard.add_scalar('Loss/test', history['loss'], epoch)
+            tenorboard.add_scalar('Acc/test', history['acc'], epoch)
+            tenorboard.add_scalar('LR', self.get_lr(), epoch)
+            self.scheduler_exp.step()
+            #self.scheduler_plateu.step(history['loss'])
+
+            self.mean_train_loss.reset()
 
     def train_step(self):
         pass
@@ -69,12 +99,12 @@ class TrainingPipeline:
         self.model.eval()
         with torch.no_grad():
             guess = 0
-            loss = 0
+            loss = AverageMeter()
             n = 0
             i = 0
-            for x, y in DataLoader(self.test_ds, batch_size=self.batch_size):
+            for x, y in tqdm(DataLoader(self.test_ds, batch_size=self.batch_size)):
                 out = self.model(x)
-                loss += self.loss(out, y)
+                loss.update(self.loss(out, y))
                 i += 1
                 y_pred = (out > 0.).int()
                 guess += sum([int(all(y[i] == y_pred[i])) for i in range(len(y))])
@@ -82,12 +112,12 @@ class TrainingPipeline:
 
         res = {
             'acc': guess / n,
-            'loss': loss / i
+            'loss': loss.avg
         }
-        print(res)
         return res
 
 
 if __name__ == '__main__':
-    t = TrainingPipeline()
-    t.train()
+    t = TrainingPipeline(CHECKPOINT_SAVE_PATH)
+    print(t.validate())
+
