@@ -10,9 +10,11 @@ from dataset import load_tenor_dataset
 from utils import AverageMeter
 
 
-CHECKPOINT_SAVE_PATH = '../checkpoints/best_EcgAttention.pth'
-class FocalLoss(nn.Module):
+CHECKPOINT_SAVE_PATH = '../checkpoints/best_EcgAttention_v0.1.pth'
+CHECKPOINT_LOAD_PATH = '../checkpoints/best_EcgAttention.pth'
 
+
+class FocalLoss(nn.Module):
     def __init__(self, device, alpha=1.0, gamma=1.0):
         super(FocalLoss, self).__init__()
         self.alpha = torch.tensor(alpha, dtype=torch.float32).to(device)
@@ -29,28 +31,34 @@ class FocalLoss(nn.Module):
         focal_loss = torch.sum(focal_loss, dim=1)
         return focal_loss.mean()
 
+
 class TrainingPipeline:
-    def __init__(self, checkpoint:str = None):
+    def __init__(self, checkpoint: str = None, resume_epoch: int = 0):
         self.device = torch.device(
                 "cuda") if torch.cuda.is_available() else torch.device("cpu")
-        self.epochs = 150
+        self.epochs = 250
+        self.begin_epoch = 0
         self.batch_size = 256
         self.best_acc = 0.
         self.model = EcgAttention(num_classes=6).to(self.device).double()
         if checkpoint:
+            print(f'Loading from checkpoint {checkpoint}')
             self.model.load_state_dict(torch.load(checkpoint))
+            self.begin_epoch = resume_epoch
+            print('Loaded successfully!')
 
-        self.loss = FocalLoss(self.device, alpha=10, gamma=5)#nn.BCEWithLogitsLoss()
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-4, weight_decay=0.1)
-        self.scheduler_exp = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.99)
+        self.loss = FocalLoss(self.device, alpha=10, gamma=5)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-6, weight_decay=0.1)
+        #self.optimizer = torch.optim.SGD(self.model.parameters(), lr=1e-5, momentum=0.9, weight_decay=0.1)
+        self.scheduler_exp = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, 0.999)
         self.scheduler_plateu = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
+        print('Loading dataset...')
         self.train_ds, self.test_ds = load_tenor_dataset(self.device)
 
         self.mean_train_loss = AverageMeter()
         self.mean_test_loss = AverageMeter()
         self.mean_acc = AverageMeter()
         print('Initialized successfully')
-
     def get_lr(self):
         for param_group in self.optimizer.param_groups:
             return param_group['lr']
@@ -58,7 +66,7 @@ class TrainingPipeline:
     def train(self):
         tenorboard = SummaryWriter()
         train_dl = DataLoader(self.train_ds, batch_size=self.batch_size)
-        for epoch in range(self.epochs):
+        for epoch in range(self.begin_epoch, self.epochs):
             print(f'epoch {epoch}')
             self.model.train()
             for x, y in tqdm(train_dl):
@@ -73,8 +81,8 @@ class TrainingPipeline:
                 self.optimizer.zero_grad()
                 #self.scheduler.step()#history['loss'])
             history = self.validate()
-            print(history)
             print(f'Mean train loss {self.mean_train_loss.avg}')
+            print(history)
 
             # Save checkpoint
             if history['acc'] > self.best_acc:
@@ -118,6 +126,6 @@ class TrainingPipeline:
 
 
 if __name__ == '__main__':
-    t = TrainingPipeline(CHECKPOINT_SAVE_PATH)
-    print(t.validate())
+    t = TrainingPipeline(CHECKPOINT_LOAD_PATH, 143)
+    t.train()
 
