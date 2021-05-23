@@ -1,9 +1,10 @@
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from sklearn.metrics import accuracy_score
+import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
+from sklearn.metrics import classification_report
 
 from model import EcgAttention
 from dataset import load_tenor_dataset
@@ -33,9 +34,9 @@ class FocalLoss(nn.Module):
 
 
 class TrainingPipeline:
-    def __init__(self, checkpoint: str = None, resume_epoch: int = 0):
+    def __init__(self, checkpoint: str = None, resume_epoch: int = 0, gpu=True):
         self.device = torch.device(
-                "cuda") if torch.cuda.is_available() else torch.device("cpu")
+                "cuda") if torch.cuda.is_available() and gpu else torch.device("cpu")
         self.epochs = 250
         self.begin_epoch = 0
         self.batch_size = 256
@@ -43,7 +44,7 @@ class TrainingPipeline:
         self.model = EcgAttention(num_classes=6).to(self.device).double()
         if checkpoint:
             print(f'Loading from checkpoint {checkpoint}')
-            self.model.load_state_dict(torch.load(checkpoint))
+            self.model.load_state_dict(torch.load(checkpoint, map_location=self.device))
             self.begin_epoch = resume_epoch
             print('Loaded successfully!')
 
@@ -103,13 +104,14 @@ class TrainingPipeline:
     def train_step(self):
         pass
 
-    def validate(self):
+    def validate(self, report=True):
         self.model.eval()
         with torch.no_grad():
             guess = 0
             loss = AverageMeter()
             n = 0
             i = 0
+            y_val_list, y_pred_list = [], []
             for x, y in tqdm(DataLoader(self.test_ds, batch_size=self.batch_size)):
                 out = self.model(x)
                 loss.update(self.loss(out, y))
@@ -117,15 +119,27 @@ class TrainingPipeline:
                 y_pred = (out > 0.).int()
                 guess += sum([int(all(y[i] == y_pred[i])) for i in range(len(y))])
                 n += y_pred.size(0)
+                y_pred_list.append(y_pred.cpu().detach().numpy())
+                y_val_list.append(y.cpu().detach().numpy())
 
         res = {
             'acc': guess / n,
             'loss': loss.avg
         }
+        if report:
+            columns = ['1dAVb', 'RBBB', 'LBBB', 'SB', 'AF', 'ST']
+            print(classification_report(
+                      *list(map(np.concatenate, [y_val_list, y_pred_list])),
+                      target_names=columns))
         return res
+
+    def export_onnx(self):
+        self.model.eval()
+        x = torch.zeros(1, 12, 5000, requires_grad=True)
+        torch.onnx.export(self.model.float(), x, 'ecgConvAttention.onnx')
 
 
 if __name__ == '__main__':
-    t = TrainingPipeline(CHECKPOINT_LOAD_PATH, 143)
-    t.train()
+    t = TrainingPipeline(CHECKPOINT_LOAD_PATH, 143, gpu=False)
+    t.export_onnx()
 
